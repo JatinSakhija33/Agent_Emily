@@ -714,7 +714,10 @@ class ContentFromDriveAgent:
                 # Remove the date part from the end
                 description = name_without_ext
                 # Try to remove the date pattern
-                for pattern in [r'_\d{1,2}\s+[a-zA-Z]{3,9}(?:\s+\d{4})?$', 
+                # Handle standard patterns first
+                for pattern in [r'_\d{4}[-_]\d{2}[-_]\d{2}$', r'-\d{4}[-_]\d{2}[-_]\d{2}$', 
+                               r'_\d{2}[-_]\d{2}[-_]\d{4}$', r'-\d{2}[-_]\d{2}[-_]\d{4}$',
+                               r'_\d{1,2}\s+[a-zA-Z]{3,9}(?:\s+\d{4})?$', 
                                r'-\d{1,2}\s+[a-zA-Z]{3,9}(?:\s+\d{4})?$',
                                r'\d{1,2}\s+[a-zA-Z]{3,9}(?:\s+\d{4})?$']:
                     description = re.sub(pattern, '', description, flags=re.IGNORECASE)

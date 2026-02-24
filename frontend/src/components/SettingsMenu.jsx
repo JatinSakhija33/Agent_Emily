@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { X, CreditCard, User, Download, Moon, Sun, Settings, Share2, ExternalLink } from 'lucide-react'
+import { X, CreditCard, User, Download, Moon, Sun, Settings, Share2, ExternalLink, RefreshCw, Check, AlertCircle } from 'lucide-react'
 import { socialMediaService } from '../services/socialMedia'
 import { connectionsAPI } from '../services/connections'
 import { fetchAllConnections } from '../services/fetchConnections'
@@ -26,6 +26,7 @@ const SettingsMenu = ({ isOpen, onClose, isDarkMode = false }) => {
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false)
   const [localDarkMode, setLocalDarkMode] = useState(isDarkMode)
   const pollingIntervalRef = useRef(null)
+  const [syncing, setSyncing] = useState(false)
 
   const platforms = [
     { id: 'facebook', name: 'Facebook' },
@@ -509,6 +510,42 @@ const SettingsMenu = ({ isOpen, onClose, isDarkMode = false }) => {
     }
   }
 
+  const handleSyncDrive = async () => {
+    if (syncing) return
+
+    try {
+      setSyncing(true)
+      const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://agent-emily.onrender.com'
+      const baseUrl = API_BASE_URL.replace(/\/+$/, '')
+
+      const { data: { session } } = await supabase.auth.getSession()
+      const authToken = session?.access_token ||
+        localStorage.getItem('authToken') ||
+        localStorage.getItem('token') ||
+        localStorage.getItem('access_token')
+
+      const response = await fetch(`${baseUrl}/drive/scan`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        }
+      })
+
+      const result = await response.json()
+      if (result.success) {
+        alert(`Sync Successful! Found ${result.found_files} files, queued ${result.queued} posts.`)
+      } else {
+        alert(`Sync failed: ${result.message || result.reason || 'Unknown error'}`)
+      }
+    } catch (error) {
+      console.error('Error syncing Drive:', error)
+      alert(`Sync error: ${error.message}`)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   const handleWhatsAppConnect = async () => {
     // Open popup immediately to avoid popup blocker
     const popup = window.open(
@@ -832,15 +869,30 @@ const SettingsMenu = ({ isOpen, onClose, isDarkMode = false }) => {
 
                           <div className="flex items-center gap-2">
                             {isConnected ? (
-                              <button
-                                onClick={() => window.open('https://drive.google.com/drive/my-drive', '_blank')}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-widest transition-all ${isDarkMode
-                                  ? 'bg-white/5 text-white border border-white/10 hover:bg-white/10'
-                                  : 'bg-slate-50 text-slate-700 border border-black/[0.05] hover:bg-slate-100 shadow-sm'
-                                  }`}
-                              >
-                                <ExternalLink className="w-3 h-3" /> Open Drive
-                              </button>
+                              <>
+                                <button
+                                  onClick={handleSyncDrive}
+                                  disabled={syncing}
+                                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-widest transition-all ${syncing
+                                    ? 'bg-blue-600/20 text-blue-400 cursor-not-allowed'
+                                    : (isDarkMode
+                                      ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30'
+                                      : 'bg-blue-50 text-blue-600 border border-blue-100 hover:bg-blue-100 shadow-sm')
+                                    }`}
+                                >
+                                  <RefreshCw className={`w-3 h-3 ${syncing ? 'animate-spin' : ''}`} />
+                                  {syncing ? 'Syncing...' : 'Sync Now'}
+                                </button>
+                                <button
+                                  onClick={() => window.open('https://drive.google.com/drive/my-drive', '_blank')}
+                                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-widest transition-all ${isDarkMode
+                                    ? 'bg-white/5 text-white border border-white/10 hover:bg-white/10'
+                                    : 'bg-slate-50 text-slate-700 border border-black/[0.05] hover:bg-slate-100 shadow-sm'
+                                    }`}
+                                >
+                                  <ExternalLink className="w-3 h-3" /> Open Drive
+                                </button>
+                              </>
                             ) : (
                               <button
                                 onClick={() => window.location.href = 'https://agent-emily.onrender.com/connections/google'}

@@ -577,94 +577,82 @@ async def scan_drive_for_user(user_id: str) -> dict:
         platforms         = _get_connected_platforms(user_id) or ["facebook"]
         auto_post         = (conn.get("metadata") or {}).get("auto_post", False)
         business_context  = _get_business_context(user_id)
-        queued_count      = 0
         total_found       = 0
+        queued_count      = 0
 
-        # ── 1. Direct files in Emily root ─────────────────────────────────────
-        root_files = _list_files_in_folder(service, emily_folder_id)
-        new_root_files = [f for f in root_files if not _is_processed(user_id, f["id"])]
-        total_found += len(new_root_files)
-
-        for platform in platforms:
-            slots = _compute_schedule_slots(None, len(new_root_files), platform)
-            for idx, f in enumerate(new_root_files):
-                try:
-                    caption = _generate_caption(f["name"], f.get("mimeType", ""), platform, business_context)
-                    _queue_file(user_id, platform, caption, f, auto_post, slots[idx], folder_name="root")
-                    queued_count += 1
-                except Exception as fe:
-                    logger.error(f"Error queuing root file {f['name']}: {fe}")
-
-        for f in new_root_files:
-            _mark_processed(user_id, f["id"], f["name"], f.get("mimeType", ""), "processed")
-
-        # ── 2. Subfolders ──────────────────────────────────────────────────────
-        subfolders = _list_subfolders(service, emily_folder_id)
-        logger.info(f"Emily folder has {len(subfolders)} subfolder(s): {[s['name'] for s in subfolders]}")
-
-        for subfolder in subfolders:
-            folder_name = subfolder["name"]
-            folder_id   = subfolder["id"]
-
-            # Try to parse a date from the folder name
-            target_dt = _parse_folder_date(folder_name)
-
-            # Determine if this is a platform-specific folder (legacy)
-            folder_lower = folder_name.lower().strip()
-            is_platform_folder = folder_lower in {p.lower() for p in platforms} or folder_lower in {
-                "instagram", "facebook", "twitter", "linkedin", "tiktok",
-                "pinterest", "youtube", "wordpress", "whatsapp",
-            }
-
-            # Get files inside this subfolder
-            all_files = _list_files_in_folder(service, folder_id)
+        async def _scan_recursive(current_folder_id: str, current_folder_name: str, 
+                                   parent_platform: Optional[str] = None, 
+                                   parent_date: Optional[datetime] = None,
+                                   depth: int = 0):
+            if depth > 4: # Safety limit
+                return 0
+                
+            nonlocal total_found, queued_count
+            
+            # Determine platform context for this branch
+            folder_lower = current_folder_name.lower().strip()
+            current_platform = parent_platform
+            
+            # If folder name matches a platform, override
+            potential_platform = None
+            if folder_lower in {p.lower() for p in platforms}:
+                potential_platform = folder_lower
+            elif folder_lower in {"instagram", "facebook", "twitter", "linkedin", "tiktok", "pinterest", "youtube", "wordpress", "whatsapp"}:
+                potential_platform = folder_lower
+                
+            if potential_platform:
+                current_platform = potential_platform
+    
+            # Determine date context for this branch
+            current_date = parent_date
+            parsed_date = _parse_folder_date(current_folder_name)
+            if parsed_date:
+                current_date = parsed_date
+    
+            # 1. Process files in THIS folder
+            all_files = _list_files_in_folder(service, current_folder_id)
             new_files = [f for f in all_files if not _is_processed(user_id, f["id"])]
-
-            if not new_files:
-                logger.info(f"Subfolder '{folder_name}': no new files, skipping")
-                continue
-
-            total_found += len(new_files)
-            logger.info(
-                f"Subfolder '{folder_name}': {len(new_files)} new file(s), "
-                f"date_hint={target_dt}, platform_folder={is_platform_folder}"
-            )
-
-            if is_platform_folder:
-                # Legacy: treat folder name AS the platform
-                target_platform = folder_lower if folder_lower in {p.lower() for p in platforms} else folder_lower
-                active_platforms_for_folder = [target_platform]
-            else:
-                active_platforms_for_folder = platforms
-
-            for platform in active_platforms_for_folder:
-                # Compute staggered slots for this platform
-                slots = _compute_schedule_slots(target_dt, len(new_files), platform)
-
-                for idx, f in enumerate(new_files):
-                    try:
-                        # Pass folder name as creative context hint to Emily
-                        caption = _generate_caption(
-                            f["name"], f.get("mimeType", ""), platform,
-                            business_context, folder_context=folder_name
-                        )
-                        _queue_file(
-                            user_id, platform, caption, f, auto_post,
-                            scheduled_at=slots[idx],
-                            folder_name=folder_name,
-                        )
-                        queued_count += 1
-                        logger.info(
-                            f"  ✅ Queued '{f['name']}' → {platform} at {slots[idx].strftime('%Y-%m-%d %H:%M UTC')}"
-                        )
-                    except Exception as fe:
-                        logger.error(f"Error queuing '{f['name']}' in '{folder_name}': {fe}")
-                        _mark_processed(user_id, f["id"], f["name"], f.get("mimeType", ""), "failed", str(fe))
-
-            # Mark all files as processed (once, regardless of platform count)
-            for f in new_files:
-                _mark_processed(user_id, f["id"], f["name"], f.get("mimeType", ""), "processed")
-
+            
+            if new_files:
+                total_found += len(new_files)
+                # If no platform inherited or detected, use all platforms
+                active_platforms = [current_platform] if current_platform else platforms
+                
+                for platform in active_platforms:
+                    # Compute staggered slots for this platform
+                    slots = _compute_schedule_slots(current_date, len(new_files), platform)
+                    
+                    for idx, f in enumerate(new_files):
+                        try:
+                            caption = _generate_caption(
+                                f["name"], f.get("mimeType", ""), platform,
+                                business_context, folder_context=current_folder_name
+                            )
+                            _queue_file(
+                                user_id, platform, caption, f, auto_post,
+                                scheduled_at=slots[idx],
+                                folder_name=current_folder_name
+                            )
+                            queued_count += 1
+                        except Exception as fe:
+                            logger.error(f"Error queuing '{f['name']}' in '{current_folder_name}': {fe}")
+    
+                # Mark processed
+                for f in new_files:
+                    _mark_processed(user_id, f["id"], f["name"], f.get("mimeType", ""), "processed")
+    
+            # 2. Recurse into subfolders
+            subfolders = _list_subfolders(service, current_folder_id)
+            for sub in subfolders:
+                await _scan_recursive(
+                    sub["id"], sub["name"], 
+                    current_platform, current_date, 
+                    depth + 1
+                )
+    
+        # Start recursive scan from Emily root
+        await _scan_recursive(emily_folder_id, "root", depth=0)
+    
         # Update last_scan_at
         meta = {**(conn.get("metadata") or {}), "last_scan_at": datetime.now(timezone.utc).isoformat()}
         if conn.get("_source") != "platform_connections":

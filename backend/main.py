@@ -268,31 +268,15 @@ async def startup_event():
 
     # Start Gmail sync scheduler (runs every 15 minutes in background thread - non-blocking)
     try:
-        from jobs.gmail_sync_job import GmailSyncJob
-        import threading
-
-        def run_gmail_sync_background():
-            """Run Gmail sync in background thread to avoid blocking other requests"""
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                job = GmailSyncJob()
-                loop.run_until_complete(job.sync_all_users_gmail())
-            except Exception as e:
-                logger.error(f"Error in background Gmail sync: {e}")
-            finally:
-                loop.close()
-
-        # Schedule to run every 15 minutes in background thread
+        from jobs.gmail_sync_job import run_gmail_sync_job
         scheduler.add_job(
-            func=lambda: threading.Thread(target=run_gmail_sync_background).start(),
+            run_gmail_sync_job,
             trigger='interval',
-            minutes=15,  # Run every 15 minutes
+            minutes=15,
             id='gmail_sync_job',
-            max_instances=1  # Only one instance at a time
+            max_instances=1
         )
-
-        logger.info("Gmail sync scheduler started successfully - runs every 15 minutes in background thread")
+        logger.info("Gmail sync scheduler started successfully - runs every 15 minutes")
     except Exception as e:
         logger.error(f"Failed to start Gmail sync scheduler: {e}")
         logger.info("Continuing without Gmail sync scheduler")
@@ -302,19 +286,8 @@ async def startup_event():
         from routers.drive_monitor import scan_all_users_drive
         import threading
 
-        def run_drive_monitor_background():
-            """Run Drive monitor in background thread to avoid blocking other requests"""
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(scan_all_users_drive())
-            except Exception as e:
-                logger.error(f"Error in background Drive monitor: {e}")
-            finally:
-                loop.close()
-
         scheduler.add_job(
-            func=lambda: threading.Thread(target=run_drive_monitor_background).start(),
+            scan_all_users_drive,
             trigger='interval',
             minutes=5,
             id='drive_monitor_job',
